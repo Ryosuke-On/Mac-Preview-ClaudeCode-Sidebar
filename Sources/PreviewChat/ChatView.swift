@@ -52,11 +52,16 @@ struct ChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        if messages.isEmpty {
-                            emptyState
-                        }
-                        ForEach(messages) { msg in
-                            MessageRow(message: msg).id(msg.id)
+                        if messages.isEmpty { emptyState }
+                        ForEach(Array(messages.enumerated()), id: \.element.id) { idx, msg in
+                            MessageRow(
+                                message: msg,
+                                onEdit: msg.role == .user && streamingIndex == nil
+                                    ? { editMessage(at: idx) } : nil,
+                                onRegenerate: msg.role == .assistant && streamingIndex == nil
+                                    ? { regenerate(at: idx) } : nil
+                            )
+                            .id(msg.id)
                         }
                         Color.clear.frame(height: 1).id("bottom")
                     }
@@ -68,7 +73,6 @@ struct ChatView: View {
                     }
                 }
                 .onChange(of: messages) { _, _ in
-                    // Scroll on every text update while streaming
                     guard streamingIndex != nil else { return }
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
@@ -78,24 +82,17 @@ struct ChatView: View {
         }
         .background(Color(NSColor.textBackgroundColor).opacity(0.4))
         .onAppear {
-            // Restore prior messages for this file
             if let saved = ChatStore.load(for: fileURL) {
                 messages = saved.messages.map {
-                    ChatMessage(
-                        role: ChatMessage.Role(rawValue: $0.role) ?? .system,
-                        text: $0.text,
-                        toolName: $0.toolName
-                    )
+                    ChatMessage(role: ChatMessage.Role(rawValue: $0.role) ?? .system,
+                                text: $0.text, toolName: $0.toolName)
                 }
             }
             agent.onEvent = { handleEvent($0) }
             agent.onSessionId = { _ in persist() }
             agent.start()
         }
-        .onDisappear {
-            persist()
-            agent.stop()
-        }
+        .onDisappear { persist(); agent.stop() }
         .confirmationDialog("チャット履歴を消去しますか？", isPresented: $showClearConfirm) {
             Button("消去", role: .destructive) { clearHistory() }
             Button("キャンセル", role: .cancel) {}
@@ -108,50 +105,27 @@ struct ChatView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "bubble.left.and.bubble.right.fill")
-                .foregroundStyle(.tint)
-            Text(fileURL.lastPathComponent)
-                .font(.headline)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            Image(systemName: "bubble.left.and.bubble.right.fill").foregroundStyle(.tint)
+            Text(fileURL.lastPathComponent).font(.headline).lineLimit(1).truncationMode(.middle)
             Spacer()
             Picker("", selection: Binding(
                 get: { ModelChoice(rawValue: preferredModelRaw) ?? .sonnet },
-                set: { newValue in
-                    preferredModelRaw = newValue.rawValue
-                    agent.setModel(newValue.rawValue)
-                }
+                set: { preferredModelRaw = $0.rawValue; agent.setModel($0.rawValue) }
             )) {
-                ForEach(ModelChoice.allCases) { m in
-                    Text(m.label).tag(m)
-                }
+                ForEach(ModelChoice.allCases) { Text($0.label).tag($0) }
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(width: 90)
-            Button {
-                showClearConfirm = true
-            } label: {
-                Image(systemName: "trash")
-            }
-            .buttonStyle(.borderless)
-            .help("チャット履歴を消去")
-            Circle()
-                .fill(agent.isRunning ? Color.green : Color.gray)
-                .frame(width: 8, height: 8)
+            .pickerStyle(.menu).labelsHidden().frame(width: 90)
+            Button { showClearConfirm = true } label: { Image(systemName: "trash") }
+                .buttonStyle(.borderless).help("チャット履歴を消去")
+            Circle().fill(agent.isRunning ? Color.green : Color.gray).frame(width: 8, height: 8)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12).padding(.vertical, 10)
     }
 
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("このファイルについて質問できます。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Text("Enter で送信 / Shift+Enter で改行")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            Text("このファイルについて質問できます。").font(.subheadline).foregroundStyle(.secondary)
+            Text("Enter で送信 / Shift+Enter で改行").font(.caption).foregroundStyle(.tertiary)
         }
         .padding(.vertical, 20)
     }
@@ -165,12 +139,9 @@ struct ChatView: View {
                 .padding(6)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(NSColor.controlBackgroundColor)))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2)))
-            Button(action: send) {
-                Image(systemName: "paperplane.fill")
-                    .frame(width: 28, height: 28)
-            }
-            .keyboardShortcut(.return, modifiers: .command)
-            .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button(action: send) { Image(systemName: "paperplane.fill").frame(width: 28, height: 28) }
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding(10)
     }
@@ -188,6 +159,31 @@ struct ChatView: View {
         persist()
     }
 
+    /// Truncate messages from the given user message index, populate the input bar, reset session.
+    private func editMessage(at index: Int) {
+        guard messages.indices.contains(index), messages[index].role == .user else { return }
+        let text = messages[index].text
+        messages.removeSubrange(index...)
+        agent.resetSession()
+        agent.start()
+        input = text
+        persist()
+    }
+
+    /// Remove the assistant message at index and re-send the preceding user message.
+    private func regenerate(at index: Int) {
+        guard messages.indices.contains(index), messages[index].role == .assistant else { return }
+        let userText = messages[0..<index].last(where: { $0.role == .user })?.text
+        guard let userText else { return }
+        messages.removeSubrange(index...)
+        agent.resetSession()
+        agent.start()
+        agent.send(userMessage: userText)
+        messages.append(ChatMessage(role: .assistant, text: "", isStreaming: true))
+        streamingIndex = messages.count - 1
+        persist()
+    }
+
     private func clearHistory() {
         messages.removeAll()
         streamingIndex = nil
@@ -195,6 +191,8 @@ struct ChatView: View {
         agent.resetSession()
         agent.start()
     }
+
+    // MARK: - Event handling
 
     private func handleEvent(_ event: ClaudeAgent.Event) {
         switch event {
@@ -207,23 +205,16 @@ struct ChatView: View {
             }
         case .assistantTurnEnd:
             if let i = streamingIndex, messages.indices.contains(i) {
-                if messages[i].text.isEmpty {
-                    messages.remove(at: i)
-                } else {
-                    // Mark streaming done → MessageRow switches to Markdown renderer
-                    messages[i].isStreaming = false
-                }
+                if messages[i].text.isEmpty { messages.remove(at: i) }
+                else { messages[i].isStreaming = false }
             }
             streamingIndex = nil
             persist()
         case .toolUse(let name, let input):
-            let summary = summarize(toolName: name, input: input)
-            messages.append(ChatMessage(role: .tool, text: summary, toolName: name))
+            messages.append(ChatMessage(role: .tool, text: summarize(toolName: name, input: input), toolName: name))
             streamingIndex = nil
-        case .toolResult:
-            break
-        case .systemInfo:
-            break
+        case .toolResult: break
+        case .systemInfo: break
         case .error(let e):
             messages.append(ChatMessage(role: .system, text: "⚠️ \(e)"))
             persist()
@@ -232,9 +223,7 @@ struct ChatView: View {
 
     private func persist() {
         let saved = ChatStore.Saved(
-            messages: messages.map {
-                .init(role: $0.role.rawValue, text: $0.text, toolName: $0.toolName)
-            },
+            messages: messages.map { .init(role: $0.role.rawValue, text: $0.text, toolName: $0.toolName) },
             sessionId: agent.sessionId
         )
         ChatStore.save(saved, for: fileURL)
@@ -257,14 +246,12 @@ struct ChatView: View {
     }
 }
 
-// MARK: - Chat input (Enter = send, Shift+Enter = newline)
+// MARK: - Chat input
 
 struct ChatInputField: NSViewRepresentable {
     @Binding var text: String
     var onSubmit: () -> Void
-
     func makeCoordinator() -> Coordinator { Coordinator(self) }
-
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
         scroll.hasVerticalScroller = true
@@ -282,89 +269,105 @@ struct ChatInputField: NSViewRepresentable {
         context.coordinator.textView = tv
         return scroll
     }
-
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let tv = scroll.documentView as? NSTextView else { return }
-        if tv.string != text {
-            tv.string = text
-        }
+        if tv.string != text { tv.string = text }
     }
-
     final class Coordinator: NSObject, NSTextViewDelegate {
         let parent: ChatInputField
         weak var textView: NSTextView?
         init(_ parent: ChatInputField) { self.parent = parent }
-
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
             parent.text = tv.string
         }
-
         func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            // insertNewline = plain Enter → send.
-            // insertNewlineIgnoringFieldEditor (Shift+Enter) = insert newline.
             if selector == #selector(NSResponder.insertNewline(_:)) {
-                let shift = NSEvent.modifierFlags.contains(.shift)
-                if shift {
+                if NSEvent.modifierFlags.contains(.shift) {
                     textView.insertNewlineIgnoringFieldEditor(nil)
-                    return true
                 } else {
                     parent.onSubmit()
-                    return true
                 }
+                return true
             }
             return false
         }
     }
 }
 
+// MARK: - Message row
+
 struct MessageRow: View {
     let message: ChatMessage
+    var onEdit: (() -> Void)? = nil
+    var onRegenerate: (() -> Void)? = nil
+    @State private var hovering = false
+
     var body: some View {
         switch message.role {
         case .user:
-            HStack(alignment: .top) {
+            HStack(alignment: .top, spacing: 6) {
                 Spacer(minLength: 30)
                 Text(message.text)
                     .textSelection(.enabled)
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.15)))
+                if onEdit != nil {
+                    VStack {
+                        Spacer()
+                        Button { onEdit?() } label: {
+                            Image(systemName: "pencil")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .opacity(hovering ? 1 : 0)
+                        .help("編集して再送信")
+                    }
+                }
             }
+            .onHover { hovering = $0 }
+
         case .assistant:
             HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(.tint)
-                    .frame(width: 16)
-                    .padding(.top, 2)
-                renderedAssistant
-                    .textSelection(.enabled)
+                Image(systemName: "sparkles").foregroundStyle(.tint).frame(width: 16).padding(.top, 2)
+                VStack(alignment: .leading, spacing: 4) {
+                    renderedAssistant
+                    if onRegenerate != nil && !message.isStreaming {
+                        Button { onRegenerate?() } label: {
+                            Label("再生成", systemImage: "arrow.clockwise")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .opacity(hovering ? 1 : 0)
+                        .help("この回答を再生成")
+                    }
+                }
                 Spacer(minLength: 0)
             }
+            .onHover { hovering = $0 }
+
         case .tool:
             HStack(spacing: 6) {
-                Image(systemName: "wrench.and.screwdriver")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
+                Image(systemName: "wrench.and.screwdriver").foregroundStyle(.secondary).font(.caption)
                 Text(message.text)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    .lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 8).padding(.vertical, 4)
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.08)))
+
         case .system:
-            Text(message.text)
-                .font(.caption)
-                .foregroundStyle(.orange)
+            Text(message.text).font(.caption).foregroundStyle(.orange)
         }
     }
 
     @ViewBuilder
     private var renderedAssistant: some View {
         if message.isStreaming {
-            // Plain Text during streaming to avoid per-character Markdown re-parse
             Text(message.text)
                 .font(.system(size: 13))
                 .textSelection(.enabled)
@@ -377,78 +380,33 @@ struct MessageRow: View {
     }
 }
 
+// MARK: - Markdown theme
+
 extension Theme {
     static let previewChat = Theme()
-        .text {
-            FontSize(13)
-            ForegroundColor(.primary)
-        }
-        .paragraph { configuration in
-            configuration.label
-                .relativeLineSpacing(.em(0.18))
-                .padding(.bottom, 6)
-        }
-        .heading1 { configuration in
-            configuration.label
-                .markdownTextStyle {
-                    FontWeight(.semibold)
-                    FontSize(.em(1.4))
-                }
-                .padding(.top, 8)
-                .padding(.bottom, 4)
-        }
-        .heading2 { configuration in
-            configuration.label
-                .markdownTextStyle {
-                    FontWeight(.semibold)
-                    FontSize(.em(1.2))
-                }
-                .padding(.top, 8)
-                .padding(.bottom, 4)
-        }
-        .heading3 { configuration in
-            configuration.label
-                .markdownTextStyle {
-                    FontWeight(.semibold)
-                    FontSize(.em(1.05))
-                }
-                .padding(.top, 6)
-                .padding(.bottom, 2)
-        }
-        .strong {
-            FontWeight(.semibold)
-        }
-        .code {
-            FontFamilyVariant(.monospaced)
-            FontSize(.em(0.92))
-            BackgroundColor(.secondary.opacity(0.15))
-        }
+        .text { FontSize(13); ForegroundColor(.primary) }
+        .paragraph { $0.label.relativeLineSpacing(.em(0.18)).padding(.bottom, 6) }
+        .heading1 { $0.label.markdownTextStyle { FontWeight(.semibold); FontSize(.em(1.4)) }.padding(.top, 8).padding(.bottom, 4) }
+        .heading2 { $0.label.markdownTextStyle { FontWeight(.semibold); FontSize(.em(1.2)) }.padding(.top, 8).padding(.bottom, 4) }
+        .heading3 { $0.label.markdownTextStyle { FontWeight(.semibold); FontSize(.em(1.05)) }.padding(.top, 6).padding(.bottom, 2) }
+        .strong { FontWeight(.semibold) }
+        .code { FontFamilyVariant(.monospaced); FontSize(.em(0.92)); BackgroundColor(.secondary.opacity(0.15)) }
         .codeBlock { configuration in
             ScrollView(.horizontal) {
                 configuration.label
                     .relativeLineSpacing(.em(0.2))
-                    .markdownTextStyle {
-                        FontFamilyVariant(.monospaced)
-                        FontSize(.em(0.9))
-                    }
+                    .markdownTextStyle { FontFamilyVariant(.monospaced); FontSize(.em(0.9)) }
                     .padding(10)
             }
             .background(Color.secondary.opacity(0.08))
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .padding(.vertical, 4)
         }
-        .listItem { configuration in
-            configuration.label
-                .padding(.vertical, 1)
-        }
+        .listItem { $0.label.padding(.vertical, 1) }
         .blockquote { configuration in
             HStack(spacing: 0) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.secondary.opacity(0.4))
-                    .frame(width: 3)
-                configuration.label
-                    .padding(.leading, 8)
-                    .foregroundStyle(.secondary)
+                RoundedRectangle(cornerRadius: 2).fill(Color.secondary.opacity(0.4)).frame(width: 3)
+                configuration.label.padding(.leading, 8).foregroundStyle(.secondary)
             }
             .padding(.vertical, 4)
         }
