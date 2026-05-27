@@ -12,16 +12,12 @@ struct ChatMessage: Identifiable, Equatable {
 }
 
 enum ModelChoice: String, CaseIterable, Identifiable {
-    case haiku = "claude-haiku-4-5"
+    case haiku  = "claude-haiku-4-5"
     case sonnet = "claude-sonnet-4-6"
-    case opus = "claude-opus-4-7"
+    case opus   = "claude-opus-4-7"
     var id: String { rawValue }
     var label: String {
-        switch self {
-        case .haiku: return "Haiku"
-        case .sonnet: return "Sonnet"
-        case .opus: return "Opus"
-        }
+        switch self { case .haiku: "Haiku"; case .sonnet: "Sonnet"; case .opus: "Opus" }
     }
 }
 
@@ -51,15 +47,18 @@ struct ChatView: View {
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                    // VStack (not Lazy) avoids the blank-frame flash that LazyVStack
+                    // produces when new items are inserted and scrolled into view.
+                    VStack(alignment: .leading, spacing: 12) {
                         if messages.isEmpty { emptyState }
-                        ForEach(Array(messages.enumerated()), id: \.element.id) { idx, msg in
+                        ForEach(messages) { msg in
                             MessageRow(
                                 message: msg,
+                                isStreaming: streamingIndex != nil,
                                 onEdit: msg.role == .user && streamingIndex == nil
-                                    ? { editMessage(at: idx) } : nil,
+                                    ? { editMessage(id: msg.id) } : nil,
                                 onRegenerate: msg.role == .assistant && streamingIndex == nil
-                                    ? { regenerate(at: idx) } : nil
+                                    ? { regenerate(id: msg.id) } : nil
                             )
                             .id(msg.id)
                         }
@@ -67,14 +66,15 @@ struct ChatView: View {
                     }
                     .padding(12)
                 }
-                .onChange(of: messages.count) { _, _ in
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                    }
-                }
+                // Single scroll handler — no animation during streaming to prevent flicker.
                 .onChange(of: messages) { _, _ in
-                    guard streamingIndex != nil else { return }
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                    if streamingIndex != nil {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    } else {
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            proxy.scrollTo("bottom", anchor: .bottom)
+                        }
+                    }
                 }
             }
             Divider()
@@ -84,7 +84,7 @@ struct ChatView: View {
         .onAppear {
             if let saved = ChatStore.load(for: fileURL) {
                 messages = saved.messages.map {
-                    ChatMessage(role: ChatMessage.Role(rawValue: $0.role) ?? .system,
+                    ChatMessage(role: .init(rawValue: $0.role) ?? .system,
                                 text: $0.text, toolName: $0.toolName)
                 }
             }
@@ -151,36 +151,35 @@ struct ChatView: View {
     private func send() {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        messages.append(ChatMessage(role: .user, text: text))
-        agent.send(userMessage: text)
         input = ""
+        messages.append(ChatMessage(role: .user, text: text))
         messages.append(ChatMessage(role: .assistant, text: "", isStreaming: true))
         streamingIndex = messages.count - 1
+        agent.send(userMessage: text)
         persist()
     }
 
-    /// Truncate messages from the given user message index, populate the input bar, reset session.
-    private func editMessage(at index: Int) {
-        guard messages.indices.contains(index), messages[index].role == .user else { return }
-        let text = messages[index].text
-        messages.removeSubrange(index...)
+    private func editMessage(id: UUID) {
+        guard let idx = messages.firstIndex(where: { $0.id == id }),
+              messages[idx].role == .user else { return }
+        let text = messages[idx].text
+        messages.removeSubrange(idx...)
         agent.resetSession()
         agent.start()
         input = text
         persist()
     }
 
-    /// Remove the assistant message at index and re-send the preceding user message.
-    private func regenerate(at index: Int) {
-        guard messages.indices.contains(index), messages[index].role == .assistant else { return }
-        let userText = messages[0..<index].last(where: { $0.role == .user })?.text
-        guard let userText else { return }
-        messages.removeSubrange(index...)
+    private func regenerate(id: UUID) {
+        guard let idx = messages.firstIndex(where: { $0.id == id }),
+              messages[idx].role == .assistant else { return }
+        guard let userText = messages[0..<idx].last(where: { $0.role == .user })?.text else { return }
+        messages.removeSubrange(idx...)
         agent.resetSession()
         agent.start()
-        agent.send(userMessage: userText)
         messages.append(ChatMessage(role: .assistant, text: "", isStreaming: true))
         streamingIndex = messages.count - 1
+        agent.send(userMessage: userText)
         persist()
     }
 
@@ -200,7 +199,7 @@ struct ChatView: View {
             if let i = streamingIndex, messages.indices.contains(i) {
                 messages[i].text += t
             } else {
-                messages.append(ChatMessage(role: .assistant, text: t))
+                messages.append(ChatMessage(role: .assistant, text: t, isStreaming: true))
                 streamingIndex = messages.count - 1
             }
         case .assistantTurnEnd:
@@ -211,7 +210,9 @@ struct ChatView: View {
             streamingIndex = nil
             persist()
         case .toolUse(let name, let input):
-            messages.append(ChatMessage(role: .tool, text: summarize(toolName: name, input: input), toolName: name))
+            messages.append(ChatMessage(role: .tool,
+                                        text: summarize(toolName: name, input: input),
+                                        toolName: name))
             streamingIndex = nil
         case .toolResult: break
         case .systemInfo: break
@@ -222,11 +223,10 @@ struct ChatView: View {
     }
 
     private func persist() {
-        let saved = ChatStore.Saved(
+        ChatStore.save(.init(
             messages: messages.map { .init(role: $0.role.rawValue, text: $0.text, toolName: $0.toolName) },
             sessionId: agent.sessionId
-        )
-        ChatStore.save(saved, for: fileURL)
+        ), for: fileURL)
     }
 
     private func summarize(toolName: String, input: String) -> String {
@@ -276,21 +276,15 @@ struct ChatInputField: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         let parent: ChatInputField
         weak var textView: NSTextView?
-        init(_ parent: ChatInputField) { self.parent = parent }
-        func textDidChange(_ notification: Notification) {
-            guard let tv = notification.object as? NSTextView else { return }
-            parent.text = tv.string
+        init(_ p: ChatInputField) { self.parent = p }
+        func textDidChange(_ n: Notification) {
+            (n.object as? NSTextView).map { parent.text = $0.string }
         }
-        func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            if selector == #selector(NSResponder.insertNewline(_:)) {
-                if NSEvent.modifierFlags.contains(.shift) {
-                    textView.insertNewlineIgnoringFieldEditor(nil)
-                } else {
-                    parent.onSubmit()
-                }
-                return true
-            }
-            return false
+        func textView(_ tv: NSTextView, doCommandBy sel: Selector) -> Bool {
+            guard sel == #selector(NSResponder.insertNewline(_:)) else { return false }
+            if NSEvent.modifierFlags.contains(.shift) { tv.insertNewlineIgnoringFieldEditor(nil) }
+            else { parent.onSubmit() }
+            return true
         }
     }
 }
@@ -299,6 +293,7 @@ struct ChatInputField: NSViewRepresentable {
 
 struct MessageRow: View {
     let message: ChatMessage
+    var isStreaming: Bool = false   // true when ANY message is streaming
     var onEdit: (() -> Void)? = nil
     var onRegenerate: (() -> Void)? = nil
     @State private var hovering = false
@@ -306,46 +301,56 @@ struct MessageRow: View {
     var body: some View {
         switch message.role {
         case .user:
-            HStack(alignment: .top, spacing: 6) {
-                Spacer(minLength: 30)
-                Text(message.text)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.15)))
-                if onEdit != nil {
-                    VStack {
-                        Spacer()
-                        Button { onEdit?() } label: {
-                            Image(systemName: "pencil")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.borderless)
-                        .opacity(hovering ? 1 : 0)
-                        .help("編集して再送信")
+            // Entire VStack (bubble + action bar) is the hover zone.
+            VStack(alignment: .trailing, spacing: 4) {
+                HStack {
+                    Spacer(minLength: 30)
+                    Text(message.text)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.accentColor.opacity(0.15)))
+                }
+                // Action bar — always in layout, opacity drives visibility.
+                HStack(spacing: 6) {
+                    Spacer()
+                    actionButton(icon: "doc.on.doc", label: "コピー") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(message.text, forType: .string)
+                    }
+                    if let onEdit {
+                        actionButton(icon: "pencil", label: "編集して再送信", action: onEdit)
                     }
                 }
+                .opacity(hovering ? 1 : 0)
             }
+            .contentShape(Rectangle())   // full-width hover target
             .onHover { hovering = $0 }
 
         case .assistant:
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "sparkles").foregroundStyle(.tint).frame(width: 16).padding(.top, 2)
-                VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .foregroundStyle(.tint).frame(width: 16).padding(.top, 2)
                     renderedAssistant
-                    if onRegenerate != nil && !message.isStreaming {
-                        Button { onRegenerate?() } label: {
-                            Label("再生成", systemImage: "arrow.clockwise")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.borderless)
-                        .opacity(hovering ? 1 : 0)
-                        .help("この回答を再生成")
-                    }
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                // Action bar
+                if !message.isStreaming {
+                    HStack(spacing: 6) {
+                        Spacer().frame(width: 24)   // align under content
+                        actionButton(icon: "doc.on.doc", label: "コピー") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(message.text, forType: .string)
+                        }
+                        if let onRegenerate {
+                            actionButton(icon: "arrow.clockwise", label: "再生成", action: onRegenerate)
+                        }
+                    }
+                    .opacity(hovering ? 1 : 0)
+                }
             }
+            .contentShape(Rectangle())
             .onHover { hovering = $0 }
 
         case .tool:
@@ -378,6 +383,19 @@ struct MessageRow: View {
                 .textSelection(.enabled)
         }
     }
+
+    private func actionButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(4)
+                .background(RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.secondary.opacity(0.1)))
+        }
+        .buttonStyle(.borderless)
+        .help(label)
+    }
 }
 
 // MARK: - Markdown theme
@@ -386,11 +404,15 @@ extension Theme {
     static let previewChat = Theme()
         .text { FontSize(13); ForegroundColor(.primary) }
         .paragraph { $0.label.relativeLineSpacing(.em(0.18)).padding(.bottom, 6) }
-        .heading1 { $0.label.markdownTextStyle { FontWeight(.semibold); FontSize(.em(1.4)) }.padding(.top, 8).padding(.bottom, 4) }
-        .heading2 { $0.label.markdownTextStyle { FontWeight(.semibold); FontSize(.em(1.2)) }.padding(.top, 8).padding(.bottom, 4) }
-        .heading3 { $0.label.markdownTextStyle { FontWeight(.semibold); FontSize(.em(1.05)) }.padding(.top, 6).padding(.bottom, 2) }
+        .heading1 { $0.label.markdownTextStyle { FontWeight(.semibold); FontSize(.em(1.4)) }
+            .padding(.top, 8).padding(.bottom, 4) }
+        .heading2 { $0.label.markdownTextStyle { FontWeight(.semibold); FontSize(.em(1.2)) }
+            .padding(.top, 8).padding(.bottom, 4) }
+        .heading3 { $0.label.markdownTextStyle { FontWeight(.semibold); FontSize(.em(1.05)) }
+            .padding(.top, 6).padding(.bottom, 2) }
         .strong { FontWeight(.semibold) }
-        .code { FontFamilyVariant(.monospaced); FontSize(.em(0.92)); BackgroundColor(.secondary.opacity(0.15)) }
+        .code { FontFamilyVariant(.monospaced); FontSize(.em(0.92))
+            BackgroundColor(.secondary.opacity(0.15)) }
         .codeBlock { configuration in
             ScrollView(.horizontal) {
                 configuration.label
