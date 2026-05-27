@@ -23,6 +23,13 @@ final class ClaudeAgent: ObservableObject {
     private var stderrPipe: Pipe?
     private var stdoutBuffer = Data()
 
+    // Drip animation: queue received text chunks and emit character by character.
+    private var dripQueue: [Character] = []
+    private var dripTask: Task<Void, Never>?
+    /// Chars per second for the drip animation. Matches roughly the Anthropic API's
+    /// natural streaming speed (~400 chars/sec ≈ 100 tokens/sec).
+    private let dripCharsPerSecond: Double = 400
+
     private let workingDir: URL
     private let initialContext: String
     private(set) var model: String
@@ -152,9 +159,48 @@ final class ClaudeAgent: ObservableObject {
 
     /// Forget the current session; next start() spawns a fresh conversation.
     func resetSession() {
+        cancelDrip()
         stop()
         self.resumeSessionId = nil
         self.sessionId = nil
+    }
+
+    // MARK: - Drip animation
+
+    /// Queue text to drip-feed character by character to the UI.
+    private func enqueueDrip(_ text: String) {
+        dripQueue.append(contentsOf: text)
+        guard dripTask == nil || dripTask!.isCancelled else { return }
+        dripTask = Task { [weak self] in
+            await self?.runDrip()
+        }
+    }
+
+    private func runDrip() async {
+        let delay = UInt64(1_000_000_000 / dripCharsPerSecond)
+        while !dripQueue.isEmpty {
+            guard !Task.isCancelled else { break }
+            let ch = dripQueue.removeFirst()
+            onEvent?(.assistantText(String(ch)))
+            try? await Task.sleep(nanoseconds: delay)
+        }
+        dripTask = nil
+    }
+
+    private func cancelDrip() {
+        dripTask?.cancel()
+        dripTask = nil
+        dripQueue.removeAll()
+    }
+
+    /// Call after a full assistant turn ends: flush any remaining queued chars
+    /// instantly then fire turnEnd.
+    private func flushDripAndEnd() async {
+        // Wait for drip to finish naturally (it's near the end of the text)
+        if let t = dripTask {
+            await t.value
+        }
+        onEvent?(.assistantTurnEnd)
     }
 
     func send(userMessage: String) {
@@ -204,7 +250,7 @@ final class ClaudeAgent: ObservableObject {
                 for block in content {
                     if let btype = block["type"] as? String {
                         if btype == "text", let t = block["text"] as? String {
-                            onEvent?(.assistantText(t))
+                            enqueueDrip(t)
                         } else if btype == "tool_use" {
                             let name = block["name"] as? String ?? "tool"
                             let inputStr: String
@@ -216,7 +262,7 @@ final class ClaudeAgent: ObservableObject {
                         }
                     }
                 }
-                onEvent?(.assistantTurnEnd)
+                Task { await self.flushDripAndEnd() }
             }
         case "user":
             // tool_result echoed back as user message containing tool_result blocks

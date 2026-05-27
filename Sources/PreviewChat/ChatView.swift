@@ -62,9 +62,13 @@ struct ChatView: View {
                     .padding(12)
                 }
                 .onChange(of: messages.count) { _, _ in
-                    withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
                 }
-                .onChange(of: streamingIndex) { _, _ in
+                .onChange(of: messages) { _, _ in
+                    // Scroll on every text update while streaming
+                    guard streamingIndex != nil else { return }
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
