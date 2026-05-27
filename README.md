@@ -16,6 +16,16 @@ macOS 用のファイルビューワ（PDF / 画像 / Markdown）に、Claude Co
 - **Enter で送信 / Shift+Enter で改行**: チャット入力欄の標準動作。
 - **ダブルクリックで起動**: `CFBundleDocumentTypes` で PDF / 画像 / Markdown / プレーンテキストに関連付け済。
 
+## ダウンロード（ビルド済みアプリ）
+
+[Releases ページ](https://github.com/Ryosuke-On/Mac-Preview-ClaudeCode-Sidebar/releases/latest) から `PreviewChat-vX.Y.Z.dmg` をダウンロードしてください。
+
+1. DMG をダブルクリックして開き、`PreviewChat.app` を **Applications** にドラッグ
+2. **初回のみ** Finder で右クリック → **開く** → 警告ダイアログで **開く** を選択（未署名のため Gatekeeper を一度バイパスする必要があります）
+3. 2回目以降は普通にダブルクリックで起動できます
+
+自分でビルドしたい場合は[ビルド](#ビルド)へ。
+
 ## 必要なもの
 
 - macOS 14 以上

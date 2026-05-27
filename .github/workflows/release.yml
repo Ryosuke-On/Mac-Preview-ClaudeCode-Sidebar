@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build Release
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project PreviewChat.xcodeproj \
+            -scheme PreviewChat \
+            -configuration Release \
+            -derivedDataPath build \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package DMG
+        run: |
+          chmod +x scripts/make_dmg.sh
+          ./scripts/make_dmg.sh \
+            build/Build/Products/Release/PreviewChat.app \
+            PreviewChat-${{ github.ref_name }}.dmg
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: PreviewChat-${{ github.ref_name }}.dmg
+          generate_release_notes: true
+          body: |
+            ## インストール
+
+            1. `PreviewChat-${{ github.ref_name }}.dmg` をダウンロード
+            2. ダブルクリックして開き、`PreviewChat.app` を **Applications** にドラッグ
+            3. 初回起動時は Finder で右クリック → **開く** → ダイアログで **開く** を押す（未署名のため Gatekeeper を一度バイパスする必要があります）
+
+            ## 別途必要なもの
+
+            - [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (`claude` コマンド)
+            - ターミナルで `claude /login` を一度実行
