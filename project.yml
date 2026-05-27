@@ -1,0 +1,33 @@
+name: PreviewChat
+options:
+  bundleIdPrefix: com.ryosuke
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+packages:
+  MarkdownUI:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    from: "2.4.0"
+
+targets:
+  PreviewChat:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/PreviewChat
+    dependencies:
+      - package: MarkdownUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ryosuke.PreviewChat
+        PRODUCT_NAME: PreviewChat
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Sources/PreviewChat/Info.plist
+        SWIFT_VERSION: "5.10"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: NO
+        SWIFT_STRICT_CONCURRENCY: minimal

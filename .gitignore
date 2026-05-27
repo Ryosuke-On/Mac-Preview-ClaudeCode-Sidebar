@@ -1,0 +1,23 @@
+# Build artifacts
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad
+
+# XcodeGen output — regenerated from project.yml
+PreviewChat.xcodeproj/
+
+# macOS
+.DS_Store
+
+# Swift Package Manager
+.swiftpm/
+Package.resolved
+.build/
+
+# IDE
+.vscode/
+.idea/
+
+# User-local config
+.claude/
