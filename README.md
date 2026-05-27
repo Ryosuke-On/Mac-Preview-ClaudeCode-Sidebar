@@ -20,11 +20,29 @@ macOS 用のファイルビューワ（PDF / 画像 / Markdown）に、Claude Co
 
 [Releases ページ](https://github.com/Ryosuke-On/Mac-Preview-ClaudeCode-Sidebar/releases/latest) から `PreviewChat-vX.Y.Z.dmg` をダウンロードしてください。
 
-1. DMG をダブルクリックして開き、`PreviewChat.app` を **Applications** にドラッグ
-2. **初回のみ** Finder で右クリック → **開く** → 警告ダイアログで **開く** を選択（未署名のため Gatekeeper を一度バイパスする必要があります）
-3. 2回目以降は普通にダブルクリックで起動できます
+### インストール手順
 
-自分でビルドしたい場合は[ビルド](#ビルド)へ。
+1. DMG をダブルクリックして開き、`PreviewChat.app` を **Applications** にドラッグ
+2. **ターミナルを開いて以下を 1 回実行**（未署名アプリの隔離属性を解除。パスワードを聞かれるので入力してください）：
+   ```sh
+   sudo xattr -dr com.apple.quarantine /Applications/PreviewChat.app
+   ```
+3. Launchpad や Finder からダブルクリックで起動
+
+### 「"PreviewChat" は壊れているため開けません」と出た場合
+
+これは未署名アプリに macOS が付ける `com.apple.quarantine` 属性のせいで、**アプリ自体は壊れていません**。上のステップ 2 のコマンドを実行してください。それで開けるようになります。
+
+> なぜ必要か：このアプリは Apple Developer 証明書による署名・公証を行っていないため（個人プロジェクトなので $99/年の費用を払っていません）、macOS が安全のためブロックします。コマンドはその安全装置を「このアプリは信頼する」と手動で解除するためのものです。
+
+### `Operation not permitted` と出る場合
+
+macOS Sequoia 以降ではターミナルに権限が足りないことがあります。次のいずれかで対処してください：
+
+- **方法A**: 上のコマンドは既に `sudo` 付きなのでパスワード入力で通るはずです。それでも `Operation not permitted` が出る場合は方法Bへ。
+- **方法B**: **システム設定** → **プライバシーとセキュリティ** → **フルディスクアクセス** で **ターミナル.app** を追加（既にあればONに）→ ターミナルを ⌘Q で完全終了して起動し直す → もう一度コマンドを実行。
+
+自分でソースからビルドしたい場合は[ビルド](#ビルド)へ。
 
 ## 必要なもの
 

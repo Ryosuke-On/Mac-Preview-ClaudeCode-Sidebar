@@ -53,7 +53,15 @@ jobs:
 
             1. `PreviewChat-${{ github.ref_name }}.dmg` をダウンロード
             2. ダブルクリックして開き、`PreviewChat.app` を **Applications** にドラッグ
-            3. 初回起動時は Finder で右クリック → **開く** → ダイアログで **開く** を押す（未署名のため Gatekeeper を一度バイパスする必要があります）
+            3. **ターミナルで以下を 1 回実行**（未署名アプリの隔離属性を解除。パスワードを聞かれます）：
+               ```sh
+               sudo xattr -dr com.apple.quarantine /Applications/PreviewChat.app
+               ```
+            4. ダブルクリックで起動
+
+            ### 「"PreviewChat" は壊れているため開けません」と出る場合
+
+            未署名アプリに macOS が付ける `com.apple.quarantine` 属性のせいで、アプリ自体は壊れていません。上のステップ 3 のコマンドで隔離属性を解除してください。
 
             ## 別途必要なもの
 
