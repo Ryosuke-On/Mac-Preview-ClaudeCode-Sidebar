@@ -8,6 +8,7 @@ struct ChatMessage: Identifiable, Equatable {
     var role: Role
     var text: String
     var toolName: String? = nil
+    var isStreaming: Bool = false
 }
 
 enum ModelChoice: String, CaseIterable, Identifiable {
@@ -182,7 +183,7 @@ struct ChatView: View {
         messages.append(ChatMessage(role: .user, text: text))
         agent.send(userMessage: text)
         input = ""
-        messages.append(ChatMessage(role: .assistant, text: ""))
+        messages.append(ChatMessage(role: .assistant, text: "", isStreaming: true))
         streamingIndex = messages.count - 1
         persist()
     }
@@ -205,9 +206,13 @@ struct ChatView: View {
                 streamingIndex = messages.count - 1
             }
         case .assistantTurnEnd:
-            if let i = streamingIndex, messages.indices.contains(i),
-               messages[i].text.isEmpty {
-                messages.remove(at: i)
+            if let i = streamingIndex, messages.indices.contains(i) {
+                if messages[i].text.isEmpty {
+                    messages.remove(at: i)
+                } else {
+                    // Mark streaming done → MessageRow switches to Markdown renderer
+                    messages[i].isStreaming = false
+                }
             }
             streamingIndex = nil
             persist()
@@ -358,9 +363,17 @@ struct MessageRow: View {
 
     @ViewBuilder
     private var renderedAssistant: some View {
-        Markdown(message.text)
-            .markdownTheme(.previewChat)
-            .textSelection(.enabled)
+        if message.isStreaming {
+            // Plain Text during streaming to avoid per-character Markdown re-parse
+            Text(message.text)
+                .font(.system(size: 13))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            Markdown(message.text)
+                .markdownTheme(.previewChat)
+                .textSelection(.enabled)
+        }
     }
 }
 

@@ -177,12 +177,16 @@ final class ClaudeAgent: ObservableObject {
     }
 
     private func runDrip() async {
-        let delay = UInt64(1_000_000_000 / dripCharsPerSecond)
+        // Batch delivery: drain up to N chars per frame at ~30fps.
+        // This keeps the animation smooth without overwhelming the UI with 400 updates/sec.
+        let frameNanos: UInt64 = 33_000_000            // ~30fps
+        let charsPerFrame = max(1, Int(dripCharsPerSecond / 30))
         while !dripQueue.isEmpty {
             guard !Task.isCancelled else { break }
-            let ch = dripQueue.removeFirst()
-            onEvent?(.assistantText(String(ch)))
-            try? await Task.sleep(nanoseconds: delay)
+            let batch = String(dripQueue.prefix(charsPerFrame))
+            dripQueue.removeFirst(min(charsPerFrame, dripQueue.count))
+            onEvent?(.assistantText(batch))
+            try? await Task.sleep(nanoseconds: frameNanos)
         }
         dripTask = nil
     }
