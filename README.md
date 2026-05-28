@@ -4,15 +4,7 @@ PDF・画像・Markdown を閲覧しながら、Claude と対話できる macOS 
 
 <p align="center">
   <a href="https://github.com/Ryosuke-On/Mac-Preview-ClaudeCode-Sidebar/releases/latest">
-    <img src="https://img.shields.io/github/v/release/Ryosuke-On/Mac-Preview-ClaudeCode-Sidebar?label=最新バージョン&style=for-the-badge&logo=apple&logoColor=white&color=1a1a1a" alt="Download">
-  </a>
-  &nbsp;
-  <a href="https://github.com/Ryosuke-On/Mac-Preview-ClaudeCode-Sidebar/releases/latest">
-    <img src="https://img.shields.io/badge/⬇%20DMG%20をダウンロード-macOS%2014%2B-007AFF?style=for-the-badge" alt="Download DMG">
-  </a>
-  &nbsp;
-  <a href="https://github.com/Ryosuke-On/Mac-Preview-ClaudeCode-Sidebar/actions/workflows/build.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/Ryosuke-On/Mac-Preview-ClaudeCode-Sidebar/build.yml?branch=main&style=for-the-badge&label=Build" alt="Build Status">
+    <img src="https://img.shields.io/github/v/release/Ryosuke-On/Mac-Preview-ClaudeCode-Sidebar?label=Download+DMG&style=for-the-badge&logo=apple&logoColor=white&color=007AFF" alt="Download DMG">
   </a>
 </p>
 
