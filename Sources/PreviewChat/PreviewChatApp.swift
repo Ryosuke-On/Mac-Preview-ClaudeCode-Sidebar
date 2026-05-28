@@ -31,15 +31,9 @@ struct PreviewChatApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        WindowGroup(id: "viewer", for: URL.self) { $url in
-            if let url = url {
-                ContentView(fileURL: url)
-                    .frame(minWidth: 900, minHeight: 600)
-            } else {
-                WelcomeView()
-                    .frame(minWidth: 600, minHeight: 400)
-            }
-        }
+        // We manage all windows manually in AppDelegate.
+        // A minimal Settings scene is used only to attach the Commands.
+        Settings { EmptyView() }
         .commands {
             // ── File ────────────────────────────────────────────────
             CommandGroup(replacing: .newItem) {
@@ -130,13 +124,50 @@ struct PreviewChatApp: App {
 // MARK: - App delegate
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+
+    /// True once we know that files were passed at launch (suppresses automatic welcome window).
+    private var fileOpenedAtLaunch = false
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // application(_:open:) fires *before* applicationDidFinishLaunching when files are
+        // passed on the command line / Finder double-click.  We set the flag here so that
+        // applicationDidFinishLaunching can skip showing the welcome window.
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if !fileOpenedAtLaunch {
+            // No files were opened at launch — show the welcome window.
+            // The SwiftUI WindowGroup may have already created one; if not, create it now.
+            DispatchQueue.main.async {
+                if NSApp.windows.filter({ $0.isVisible && $0.title == "PreviewChat" }).isEmpty {
+                    self.showWelcomeWindow()
+                }
+            }
+        }
+    }
+
+    // Called when files are opened via Finder double-click, drag onto dock, etc.
     func application(_ application: NSApplication, open urls: [URL]) {
+        fileOpenedAtLaunch = true
+        closeWelcomeWindows()
         for url in urls { openWindow(for: url) }
     }
 
+    // Called from WelcomeView file panel and recent-file rows.
     @objc func openURL(_ sender: Any?) {
-        if let url = sender as? URL { openWindow(for: url) }
+        if let url = sender as? URL {
+            closeWelcomeWindows()
+            openWindow(for: url)
+        }
     }
+
+    // Re-show welcome when dock icon is clicked with no visible windows.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows { showWelcomeWindow() }
+        return false
+    }
+
+    // MARK: - Private helpers
 
     private func openWindow(for url: URL) {
         RecentFiles.record(url)
@@ -152,10 +183,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = false
         window.title = url.lastPathComponent
         window.center()
-        let root = ContentView(fileURL: url)
-        window.contentView = NSHostingView(rootView: root)
+        window.contentView = NSHostingView(rootView: ContentView(fileURL: url))
         window.isReleasedWhenClosed = false
         return window
+    }
+
+    /// Close any windows that are showing the WelcomeView (title == app name).
+    private func closeWelcomeWindows() {
+        for window in NSApp.windows where window.title == "PreviewChat" {
+            window.close()
+        }
+    }
+
+    /// Show a new WelcomeView window (e.g. when dock icon is clicked with no windows).
+    func showWelcomeWindow() {
+        // Reuse an existing (hidden) welcome window if possible.
+        if let existing = NSApp.windows.first(where: { $0.title == "PreviewChat" }) {
+            existing.makeKeyAndOrderFront(nil)
+            return
+        }
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 440),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered, defer: false)
+        window.title = "PreviewChat"
+        window.center()
+        window.contentView = NSHostingView(rootView: WelcomeView())
+        window.isReleasedWhenClosed = false
+        window.makeKeyAndOrderFront(nil)
     }
 }
 
