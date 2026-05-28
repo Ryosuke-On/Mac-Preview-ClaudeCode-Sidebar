@@ -32,7 +32,6 @@ jobs:
             -scheme PreviewChat \
             -configuration Release \
             -derivedDataPath build \
-            -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
             build
 

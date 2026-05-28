@@ -23,17 +23,31 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Build
+      - name: Build (Release)
         run: |
           set -o pipefail
           xcodebuild \
             -project PreviewChat.xcodeproj \
             -scheme PreviewChat \
-            -configuration Debug \
+            -configuration Release \
             -derivedDataPath build \
-            -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
             build
 
       - name: Verify app bundle
-        run: test -d build/Build/Products/Debug/PreviewChat.app
+        run: test -d build/Build/Products/Release/PreviewChat.app
+
+      - name: Create DMG
+        run: |
+          chmod +x scripts/make_dmg.sh
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          ./scripts/make_dmg.sh \
+            build/Build/Products/Release/PreviewChat.app \
+            PreviewChat-${SHORT_SHA}.dmg
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PreviewChat-${{ github.sha }}
+          path: PreviewChat-*.dmg
+          retention-days: 30
