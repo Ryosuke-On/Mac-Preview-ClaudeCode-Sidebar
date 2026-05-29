@@ -91,12 +91,21 @@ final class ClaudeAgent: ObservableObject {
         content. Describe, analyze, OCR, or answer questions about what you see.
         """ : ""
 
+        let pdfNote: String = isPDF ? """
+
+        IMPORTANT: This file is a PDF (\(fileURL.lastPathComponent)). To read it, use the
+        Read tool on its path — the Read tool ingests PDFs natively and returns their text
+        with page boundaries. You already have everything needed to read this PDF. Never
+        claim you lack a tool to open PDFs, and never suggest installing external utilities
+        (e.g. `poppler` / `pdftotext`) or converting the file — just call Read on the path.
+        """ : ""
+
         self.initialContext = """
         You are helping the user understand a specific file they are currently viewing.
         File path: \(fileURL.path)
         Working directory: \(fileURL.deletingLastPathComponent().path)
         When asked about "this file" or "the document", refer to that file.
-        You can read other files in the working directory, run searches, and write markdown summary files when asked.\(imageNote)
+        You can read other files in the working directory, run searches, and write markdown summary files when asked.\(imageNote)\(pdfNote)
 
         Formatting rules — VERY IMPORTANT, the UI renders your replies as Markdown:
         - Respond in the same language as the user.
@@ -122,9 +131,11 @@ final class ClaudeAgent: ObservableObject {
             "--verbose",
             "--append-system-prompt", initialContext,
             "--permission-mode", "acceptEdits",
-            // Pre-approve web tools so Claude can search/fetch without per-call prompts
-            // that our UI doesn't surface. File edits remain auto-approved via the mode.
-            "--allowedTools", "WebSearch,WebFetch",
+            // Pre-approve the read/search/web tools so Claude can inspect the open file
+            // (Read handles PDFs & images natively), browse the working directory, and
+            // search the web without per-call permission prompts that our UI doesn't
+            // surface. File edits remain auto-approved via the permission mode.
+            "--allowedTools", "Read,Glob,Grep,WebSearch,WebFetch",
             "--model", model,
         ]
         if let resume = resumeSessionId {
