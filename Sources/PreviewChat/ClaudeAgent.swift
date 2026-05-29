@@ -187,10 +187,17 @@ final class ClaudeAgent: ObservableObject {
             }
         }
 
-        p.terminationHandler = { [weak self] _ in
+        p.terminationHandler = { [weak self, weak p] _ in
             Task { @MainActor in
-                self?.isRunning = false
-                self?.process = nil
+                guard let self else { return }
+                // Only react if THIS process is still the active one. When the
+                // subprocess is restarted (setModel / cancelTurn call stop()+start()
+                // synchronously on the main actor), the old process terminates and
+                // this handler runs afterward — it must NOT clobber the freshly
+                // started process reference or flip isRunning off.
+                guard self.process === p else { return }
+                self.isRunning = false
+                self.process = nil
             }
         }
 
